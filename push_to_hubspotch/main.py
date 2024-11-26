@@ -36,32 +36,53 @@ tasks_to_process = df_tasks.iloc[:limit_tasks] if limit_tasks else df_tasks
 
 
 # Função para criar uma nota em uma tarefa no HubSpot
-def create_hubspot_note(hubspot_id, comment, timestamp, user_id):
+def create_hubspot_note_v2(hubspot_id, comment, timestamp, user_id):
     """
     Cria uma nota em uma tarefa no HubSpot, associada a um usuário.
     """
-    url = f"https://api.hubapi.com/engagements/v1/engagements"
+    url = f"https://app.hubspot.com/api/engagements/v2/engagements?portalId=46929315"
     data = {
-        "engagement": {
-            "active": True,
-            "type": "NOTE",
-            "timestamp": timestamp,
-            "ownerId": user_id  # Relaciona a nota ao criador
-        },
-        "associations": {
-            "ticketIds": [hubspot_id],  # Associa ao Hubspot ID
-        },
-        "metadata": {
-            "body": comment
+        "objectsToAssociate": [
+            {
+                "associationOptionRecordsMap": {
+                    hubspot_id: {
+                        "isDefaultAssociation": True,
+                        "isSelected": True,
+                        "objectId": hubspot_id,
+                        "primaryDisplayLabel": "TESTE PARA A MIGRAÇÃO",
+                        "secondaryDisplayLabel": "(demo.curseduca.pro)",
+                        "currentUserCanCommunicate": True
+                    }
+                },
+                "associationSpec": {
+                    "associationCategory": "HUBSPOT_DEFINED",
+                    "associationTypeId": 190
+                },
+                "objectIds": [hubspot_id]
+            }
+        ],
+        "object": {
+            "properties": [
+                {"name": "hs_engagement_type", "value": "NOTE"},
+                {"name": "hs_timestamp", "value": timestamp},
+                {"name": "hubspot_owner_id", "value": user_id},
+                {"name": "hs_at_mentioned_owner_ids", "value": ""},
+                {"name": "hs_engagement_source", "value": "CRM_UI"},
+                {
+                    "name": "hs_note_body",
+                    "value": f"<div style=\"\" dir=\"auto\" data-top-level=\"true\"><p style=\"margin:0;\">{comment}</p></div>"
+                }
+            ]
         }
     }
     response = requests.post(url, headers=hubspot_headers, json=data)
     return response
 
+
 # Processamento principal
 with tqdm(total=len(tasks_to_process), desc="Processing Tasks", unit="task") as tasks_pbar:
     for _, row in tasks_to_process.iterrows():
-        hubspot_id = row.get('Hubspot ID', '')
+        hubspot_id = str(row.get('Hubspot ID', '')).strip()
         task_id = row.get('Task ID', '')
         email = str(row.get('E-mail', '')).strip() if pd.notnull(row.get('E-mail')) else None
         attachments = row.get('Attachment Links', '')
@@ -96,7 +117,7 @@ with tqdm(total=len(tasks_to_process), desc="Processing Tasks", unit="task") as 
                     continue
 
                 # Criar a nota para o comentário
-                response = create_hubspot_note(hubspot_id, comment_text, comment_timestamp, comment_user_id)
+                response = create_hubspot_note_v2(hubspot_id, comment_text, comment_timestamp, comment_user_id)
 
                 if response.status_code != 201:
                     tqdm.write(f"Erro ao criar nota para Task ID {task_id}: {response.status_code}, {response.text}")
