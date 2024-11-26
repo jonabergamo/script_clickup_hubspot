@@ -31,8 +31,14 @@ email_to_user_id = dict(zip(df_users['Email'], df_users['User ID']))
 limit_tasks = 1  # Altere para limitar o número de tarefas
 
 # Processar tarefas com barra de progresso detalhada
-total_tasks = len(df_tasks)
 tasks_to_process = df_tasks.iloc[:limit_tasks] if limit_tasks else df_tasks
+
+
+# Função para validar um HubSpot ID
+def is_valid_hubspot_id(hubspot_id):
+    url = f"https://api.hubapi.com/crm/v3/objects/tasks/{hubspot_id}"
+    response = requests.get(url, headers=hubspot_headers)
+    return response.status_code == 200
 
 
 # Função para criar uma nota em uma tarefa no HubSpot
@@ -40,39 +46,21 @@ def create_hubspot_note_v2(hubspot_id, comment, timestamp, user_id):
     """
     Cria uma nota em uma tarefa no HubSpot, associada a um usuário.
     """
-    url = f"https://app.hubspot.com/api/engagements/v2/engagements?portalId=46929315"
+    url = "https://api.hubapi.com/engagements/v1/engagements"
     data = {
-        "objectsToAssociate": [
-            {
-                "associationOptionRecordsMap": {
-                    hubspot_id: {
-                        "isDefaultAssociation": True,
-                        "isSelected": True,
-                        "objectId": hubspot_id,
-                        "primaryDisplayLabel": "TESTE PARA A MIGRAÇÃO",
-                        "secondaryDisplayLabel": "(demo.curseduca.pro)",
-                        "currentUserCanCommunicate": True
-                    }
-                },
-                "associationSpec": {
-                    "associationCategory": "HUBSPOT_DEFINED",
-                    "associationTypeId": 190
-                },
-                "objectIds": [hubspot_id]
-            }
-        ],
-        "object": {
-            "properties": [
-                {"name": "hs_engagement_type", "value": "NOTE"},
-                {"name": "hs_timestamp", "value": timestamp},
-                {"name": "hubspot_owner_id", "value": user_id},
-                {"name": "hs_at_mentioned_owner_ids", "value": ""},
-                {"name": "hs_engagement_source", "value": "CRM_UI"},
-                {
-                    "name": "hs_note_body",
-                    "value": f"<div style=\"\" dir=\"auto\" data-top-level=\"true\"><p style=\"margin:0;\">{comment}</p></div>"
-                }
-            ]
+        "engagement": {
+            "active": True,
+            "type": "NOTE",
+            "timestamp": timestamp
+        },
+        "associations": {
+            "contactIds": [],
+            "companyIds": [],
+            "dealIds": [],
+            "ownerIds": [user_id]
+        },
+        "metadata": {
+            "body": comment
         }
     }
     response = requests.post(url, headers=hubspot_headers, json=data)
@@ -85,13 +73,18 @@ with tqdm(total=len(tasks_to_process), desc="Processing Tasks", unit="task") as 
         hubspot_id = str(row.get('Hubspot ID', '')).strip()
         task_id = row.get('Task ID', '')
         email = str(row.get('E-mail', '')).strip() if pd.notnull(row.get('E-mail')) else None
-        attachments = row.get('Attachment Links', '')
 
         # Atualizar a barra para exibir o Task ID em processamento
         tasks_pbar.set_description(f"Processing Task ID {task_id}")
 
         # Verificar se o email do criador é válido e obter o ID do usuário
         user_id = email_to_user_id.get(email, None)
+
+        # Validar HubSpot ID
+        if not is_valid_hubspot_id(hubspot_id):
+            tqdm.write(f"Invalid HubSpot ID: {hubspot_id}. Skipping task.")
+            tasks_pbar.update(1)
+            continue
 
         # Processar comentários associados à tarefa com barra de progresso separada
         task_comments = df_comments[df_comments['ID Clickup'] == task_id]
@@ -113,6 +106,7 @@ with tqdm(total=len(tasks_to_process), desc="Processing Tasks", unit="task") as 
                 try:
                     comment_timestamp = int(pd.to_datetime(comment_date).timestamp() * 1000)
                 except ValueError:
+                    tqdm.write(f"Invalid date format for comment. Skipping.")
                     comments_pbar.update(1)
                     continue
 
@@ -121,6 +115,11 @@ with tqdm(total=len(tasks_to_process), desc="Processing Tasks", unit="task") as 
 
                 if response.status_code != 201:
                     tqdm.write(f"Erro ao criar nota para Task ID {task_id}: {response.status_code}, {response.text}")
+                else:
+                    tqdm.write(f"Nota criada com sucesso para Task ID {task_id}.")
+
+                # Pausa para evitar problemas de rate limiting
+                time.sleep(sleep_time)
 
                 comments_pbar.update(1)
 
